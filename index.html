@@ -35,6 +35,8 @@ const engine = new BABYLON.Engine(canvas, true);
 const createScene = async function () {
 
     const scene = new BABYLON.Scene(engine);
+    scene.collisionsEnabled = true;
+    scene.gravity = new BABYLON.Vector3(0, -0.5, 0);
 
     // Cámara inicial
     const camera = new BABYLON.UniversalCamera(
@@ -44,6 +46,17 @@ const createScene = async function () {
     );
 
     camera.attachControl(canvas, true);
+    camera.speed = 0.06;
+    camera.minZ = 0.05;
+    
+    camera.applyGravity = true;
+    camera.checkCollisions = true;
+    camera.ellipsoid = new BABYLON.Vector3(0.4, 0.85, 0.4);
+
+    camera.keysUp.push(87);     // W
+    camera.keysDown.push(83);   // S
+    camera.keysLeft.push(65);   // A
+    camera.keysRight.push(68);  // D
 
     // Luz
     const light = new BABYLON.HemisphericLight(
@@ -53,24 +66,446 @@ const createScene = async function () {
     );
 
     light.intensity = 1.2;
+   
+// Cielo 360°
+const skybox = BABYLON.MeshBuilder.CreateBox(
+    "skyBox",
+    { size: 1000 },
+    scene
+);
+
+const skyboxMaterial = new BABYLON.StandardMaterial("skyBoxMaterial", scene);
+skyboxMaterial.backFaceCulling = false;
+skyboxMaterial.disableLighting = true;
+
+skyboxMaterial.reflectionTexture =
+    new BABYLON.HDRCubeTexture("./Cielo.hdr", scene, 256);
+
+skyboxMaterial.reflectionTexture.coordinatesMode =
+    BABYLON.Texture.SKYBOX_MODE;
+
+skybox.material = skyboxMaterial;
+skybox.infiniteDistance = true;
 
     // Cargar edificio
     const result = await BABYLON.SceneLoader.ImportMeshAsync(
         "",
         "./",
-        "20 DE JULIO 5 PISOS.glb",
+        "1.1.2.1 3D-RA 20 JULIO MONTAJE.glb",
         scene
     );
 
     console.log("MODELO SGOC CARGADO", result);
+    result.meshes.forEach(mesh => {
+    mesh.checkCollisions = true;
+    });
+const jugador = BABYLON.MeshBuilder.CreateBox(
+    "jugadorColision",
+    {
+        width: 0.6,
+        height: 1.7,
+        depth: 0.6
+    },
+    scene
+);
+
+jugador.isVisible = false;
+jugador.checkCollisions = true;
+jugador.ellipsoid = new BABYLON.Vector3(0.3, 0.85, 0.3);
+
+    // Encuadrar automaticamente el modelo cargado
+const candidatos = result.meshes.filter(m =>
+    m.getTotalVertices &&
+    m.getTotalVertices() > 0
+);
+
+const centros = candidatos.map(m =>
+    m.getBoundingInfo().boundingBox.centerWorld
+);
+
+const xs = centros.map(c => c.x).sort((a,b) => a-b);
+const ys = centros.map(c => c.y).sort((a,b) => a-b);
+const zs = centros.map(c => c.z).sort((a,b) => a-b);
+
+const medio = a => a[Math.floor(a.length / 2)];
+
+const centroPrincipal = new BABYLON.Vector3(
+    medio(xs),
+    medio(ys),
+    medio(zs)
+);
+
+const meshes = candidatos.filter(m => {
+    const c = m.getBoundingInfo().boundingBox.centerWorld;
+
+    return (
+        Math.abs(c.x - centroPrincipal.x) < 60 &&
+        Math.abs(c.y - centroPrincipal.y) < 60 &&
+        Math.abs(c.z - centroPrincipal.z) < 20
+    );
+});
+
+const bounds = BABYLON.Mesh.MinMax(meshes);
+const center = BABYLON.Vector3.Center(bounds.min, bounds.max);
+const size = bounds.max.subtract(bounds.min);
+const maxSize = Math.max(size.x, size.y, size.z);
+
+camera.position = new BABYLON.Vector3(
+    center.x,
+    bounds.min.y + 1.50,
+    bounds.min.z - maxSize * 0.35
+);
+
+camera.setTarget(new BABYLON.Vector3(
+    center.x,
+    bounds.min.y + 1.50,
+    center.z
+));
+
+console.log("CENTRO MODELO:", center);
+console.log("TAMANO MODELO:", size);
 
     // Activar WebXR
     try {
 
-        const xr = await scene.createDefaultXRExperienceAsync({
-            floorMeshes: []
+const xr = await scene.createDefaultXRExperienceAsync({
+    floorMeshes: [],
+    disableTeleportation: true
+});
+        
+const xrCamera = xr.baseExperience.camera;
+
+jugador.position.copyFrom(xrCamera.position);
+
+
+        
+   // Colisiones de la cámara XR
+
+
+const featuresManager = xr.baseExperience.featuresManager;
+
+let gripPressed = false;
+/*
+featuresManager.enableFeature(
+    BABYLON.WebXRFeatureName.MOVEMENT,
+    "latest",
+    {
+        xrInput: xr.input,
+        movementOrientationFollowsViewerPose: false,
+        movementSpeed: 0.02,
+        rotationSpeed: 0.05
+    }
+);
+*/
+
+        xr.input.onControllerAddedObservable.add((xrController) => {
+
+   if (xrController.inputSource.handedness !== "right") return;
+
+    xrController.onMotionControllerInitObservable.add((motionController) => {
+
+        const grip = motionController.getComponentOfType("squeeze");
+
+if (grip) {
+    grip.onButtonStateChangedObservable.add((component) => {
+        gripPressed = component.pressed;
+    });
+}
+
+        const thumbsticks = motionController.getAllComponentsOfType("thumbstick");
+        if (!thumbsticks.length) return;
+
+        const stick = thumbsticks[0];
+    let stickX = 0;
+    let stickY = 0;
+
+    stick.onAxisValueChangedObservable.add((axes) => {
+        stickX = Math.abs(axes.x) > 0.15 ? axes.x : 0;
+         stickY = Math.abs(axes.y) > 0.15 ? axes.y : 0;
+});
+
+        scene.onBeforeRenderObservable.add(() => {
+
+    const xrCamera = xr.baseExperience.camera;
+
+    // Dirección hacia adelante según la orientación actual
+    const forward = xrCamera.getDirection(BABYLON.Axis.Z);
+    forward.y = 0;
+    forward.normalize();
+
+    // Dirección lateral
+    const right = BABYLON.Vector3.Cross(BABYLON.Axis.Y, forward);
+    right.normalize();
+
+    const velocidad = 0.375;
+
+    // Adelante / atrás siempre funciona
+    xrCamera.position.addInPlace(
+        forward.scale(-stickY * velocidad)
+    );
+
+    // Sin grip: izquierda / derecha = desplazamiento lateral
+    if (!gripPressed) {
+        xrCamera.position.addInPlace(
+            right.scale(stickX * velocidad)
+        );
+    }
+
+    // Con grip: izquierda / derecha = giro
+    if (gripPressed && Math.abs(stickX) > 0.15) {
+        xrCamera.cameraRotation.y += stickX * 0.003;
+    }
+
+});
+
+    });
+
+});
+        console.log("SGOC XR ACTIVO");
+
+    } catch (error) {
+
+        console.log("WebXR no disponible en este dispositivo", error);
+
+    }
+
+    return scene;
+};
+
+createScene().then(scene => {
+
+    engine.runRenderLoop(function () {
+        scene.render();
+    });
+
+});
+
+window.addEventListener("resize", function () {
+    engine.resize();
+});
+</script>
+
+</body>
+</html>
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>SGOC XR - 20 DE JULIO</title>
+
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+    </style>
+</head>
+
+<body>
+
+<canvas id="renderCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById("renderCanvas");
+
+const engine = new BABYLON.Engine(canvas, true);
+
+const createScene = async function () {
+
+    const scene = new BABYLON.Scene(engine);
+    scene.collisionsEnabled = true;
+    scene.gravity = new BABYLON.Vector3(0, -0.5, 0);
+
+    scene.imageProcessingConfiguration.toneMappingEnabled = true;
+    scene.imageProcessingConfiguration.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
+    scene.imageProcessingConfiguration.exposure = 1.4;
+    scene.imageProcessingConfiguration.contrast = 1.1;
+
+    const camera = new BABYLON.UniversalCamera(
+        "camera",
+        new BABYLON.Vector3(0, 1.70, -5),
+        scene
+    );
+
+    camera.attachControl(canvas, true);
+    camera.speed = 0.06;
+    camera.minZ = 0.05;
+    
+    camera.applyGravity = true;
+    camera.checkCollisions = true;
+    camera.ellipsoid = new BABYLON.Vector3(0.4, 0.85, 0.4);
+
+    camera.keysUp.push(87);
+    camera.keysDown.push(83);
+    camera.keysLeft.push(65);
+    camera.keysRight.push(68);
+
+    const light = new BABYLON.HemisphericLight(
+        "light",
+        new BABYLON.Vector3(0, 1, 0),
+        scene
+    );
+
+    light.intensity = 1.2;
+   
+const skybox = BABYLON.MeshBuilder.CreateBox(
+    "skyBox",
+    { size: 1000 },
+    scene
+);
+
+const skyboxMaterial = new BABYLON.StandardMaterial("skyBoxMaterial", scene);
+skyboxMaterial.backFaceCulling = false;
+skyboxMaterial.disableLighting = true;
+
+skyboxMaterial.reflectionTexture =
+    new BABYLON.HDRCubeTexture("./Cielo.hdr", scene, 1024);
+
+skyboxMaterial.reflectionTexture.coordinatesMode =
+    BABYLON.Texture.SKYBOX_MODE;
+
+skybox.material = skyboxMaterial;
+skybox.infiniteDistance = true;
+
+scene.environmentTexture = skyboxMaterial.reflectionTexture;
+scene.environmentIntensity = 1.2;
+
+const sol = new BABYLON.DirectionalLight("sol", new BABYLON.Vector3(-0.5, -1, -0.3), scene);
+sol.intensity = 1.5;
+
+    const result = await BABYLON.SceneLoader.ImportMeshAsync(
+        "",
+        "./",
+        "20 JULIO-2.glb",
+        scene
+    );
+
+    console.log("MODELO SGOC CARGADO", result);
+    result.meshes.forEach(mesh => {
+    mesh.checkCollisions = true;
+    });
+
+const candidatos = result.meshes.filter(m =>
+    m.getTotalVertices &&
+    m.getTotalVertices() > 0
+);
+
+const centros = candidatos.map(m =>
+    m.getBoundingInfo().boundingBox.centerWorld
+);
+
+const xs = centros.map(c => c.x).sort((a,b) => a-b);
+const ys = centros.map(c => c.y).sort((a,b) => a-b);
+const zs = centros.map(c => c.z).sort((a,b) => a-b);
+
+const medio = a => a[Math.floor(a.length / 2)];
+
+const centroPrincipal = new BABYLON.Vector3(
+    medio(xs),
+    medio(ys),
+    medio(zs)
+);
+
+const meshes = candidatos.filter(m => {
+    const c = m.getBoundingInfo().boundingBox.centerWorld;
+
+    return (
+        Math.abs(c.x - centroPrincipal.x) < 60 &&
+        Math.abs(c.y - centroPrincipal.y) < 60 &&
+        Math.abs(c.z - centroPrincipal.z) < 20
+    );
+});
+
+const bounds = BABYLON.Mesh.MinMax(meshes);
+const center = BABYLON.Vector3.Center(bounds.min, bounds.max);
+const size = bounds.max.subtract(bounds.min);
+const maxSize = Math.max(size.x, size.y, size.z);
+
+camera.position = new BABYLON.Vector3(
+    center.x,
+    bounds.min.y + 1.50,
+    bounds.min.z - maxSize * 0.35
+);
+
+camera.setTarget(new BABYLON.Vector3(
+    center.x,
+    bounds.min.y + 1.50,
+    center.z
+));
+
+    try {
+
+const xr = await scene.createDefaultXRExperienceAsync({
+    floorMeshes: [],
+    disableTeleportation: true
+});
+
+xr.input.onControllerAddedObservable.add((xrController) => {
+
+    if (xrController.inputSource.handedness !== "right") return;
+
+    xrController.onMotionControllerInitObservable.add((motionController) => {
+
+        const thumbsticks = motionController.getAllComponentsOfType("thumbstick");
+        if (!thumbsticks.length) return;
+
+        const stick = thumbsticks[0];
+        let stickX = 0;
+        let stickY = 0;
+
+        stick.onAxisValueChangedObservable.add((axes) => {
+            stickX = Math.abs(axes.x) > 0.15 ? axes.x : 0;
+            stickY = Math.abs(axes.y) > 0.15 ? axes.y : 0;
         });
 
+        scene.onBeforeRenderObservable.add(() => {
+
+            const camaraXR = xr.baseExperience.camera;
+
+            // Solo un eje manda a la vez: si avanza, no gira; si gira, no avanza
+            let ejeAdelante = 0;
+            let ejeGiro = 0;
+
+            if (Math.abs(stickY) >= Math.abs(stickX)) {
+                ejeAdelante = stickY;
+            } else {
+                ejeGiro = stickX;
+            }
+
+            // Direccion horizontal hacia donde mira (protegida si mira casi vertical)
+            const miraHacia = camaraXR.getDirection(BABYLON.Axis.Z);
+            const horizontal = new BABYLON.Vector3(miraHacia.x, 0, miraHacia.z);
+            const largo = horizontal.length();
+            const direccion = largo > 0.2 ? horizontal.scale(1 / largo) : BABYLON.Vector3.Zero();
+
+            const velocidad = 1.8;
+
+            camaraXR.position.addInPlace(
+                direccion.scale(-ejeAdelante * velocidad)
+            );
+
+            if (Math.abs(ejeGiro) > 0.15) {
+                camaraXR.cameraRotation.y += ejeGiro * 0.006;
+            }
+
+        });
+
+    });
+
+});
         console.log("SGOC XR ACTIVO");
 
     } catch (error) {
