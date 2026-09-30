@@ -65,22 +65,11 @@ const createScene = async function () {
     const tamano = bounds.max.subtract(bounds.min);
 
     // ===== CENTRAR EL EDIFICIO Y PONER SU PISO EN Y=0 =====
-    // Asi, cuando uno "entra en VR" parado en el piso real, queda parado sobre
-    // el piso del edificio (primer piso). Es la misma logica de piso-en-cero
-    // que usamos en la maqueta, pero aqui a tamaño real (sin achicar nada).
     const edificioRoot = new BABYLON.TransformNode("edificioRoot", scene);
     result.meshes.filter(mesh => !mesh.parent).forEach(mesh => { mesh.parent = edificioRoot; });
     edificioRoot.position = new BABYLON.Vector3(-center.x, -bounds.min.y, -center.z);
 
     // ===== PUNTO DE PARTIDA: afuera, en la calle, frente al edificio =====
-    // La idea es empezar el recorrido DESDE AFUERA (para caminar alrededor,
-    // ver fachadas, ventanas, piso/andén) y luego entrar por la puerta principal.
-    // Como todavia no sabemos hacia donde mira exactamente la entrada principal
-    // dentro del archivo, por ahora arrancamos a unos metros de uno de los lados
-    // del edificio (no en el centro/adentro). ES UN PRIMER INTENTO:
-    // prueba en el computador, y si apareces adentro, metido en una pared, o
-    // mirando hacia el lado contrario a la entrada, dime hacia que lado hay que
-    // moverlo (adelante/atras/izquierda/derecha) y lo ajusto exacto.
     const margenCalle = 6; // metros de distancia desde la fachada
     const posicionInicial = new BABYLON.Vector3(0, alturaOjos, -(tamano.z / 2 + margenCalle));
     const miradaInicial = new BABYLON.Vector3(0, alturaOjos, 0); // mirando hacia el edificio al arrancar
@@ -89,19 +78,48 @@ const createScene = async function () {
     const camera = new BABYLON.UniversalCamera("cameraRecorrido", posicionInicial.clone(), scene);
     camera.setTarget(miradaInicial); // arranca mirando hacia el edificio, no hacia la calle
     camera.minZ = 0.05;
-    camera.speed = velocidadCaminar * 0.35; // el "speed" de teclado se siente mas rapido que el mismo numero en el joystick
+    camera.speed = velocidadCaminar * 0.35;
     camera.angularSensibility = 4000;
     camera.checkCollisions = true;
     camera.applyGravity = true;
     camera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, medioAltoCapsula, anchoCuerpo);
-    camera.ellipsoidOffset = new BABYLON.Vector3(0, -medioAltoCapsula, 0); // deja los "ojos" (camera.position) arriba de la capsula, no en el centro
-    camera.keysUp.push(87);    // W
-    camera.keysDown.push(83);  // S
-    camera.keysLeft.push(65);  // A
-    camera.keysRight.push(68); // D
-    camera.attachControl(canvas, true);
+    camera.ellipsoidOffset = new BABYLON.Vector3(0, -medioAltoCapsula, 0);
+    // OJO: a proposito NO usamos camera.keysUp/keysDown/etc (las teclas por
+    // defecto de Babylon), porque esas mueven exactamente hacia donde miras,
+    // incluso hacia arriba - eso era lo que te mandaba volando al cielo si
+    // mirabas un poco hacia arriba y caminabas. Mas abajo usamos un control
+    // de teclado propio que siempre mueve en plano horizontal, sin importar
+    // hacia donde estes mirando (como en cualquier juego de caminar).
+    camera.attachControl(canvas, true); // esto deja el mouse para mirar alrededor (arrastrando)
 
-    // ===== NITIDEZ: antialiasing + filtrado anisotropico (igual que en la maqueta) =====
+    // ===== TECLADO PROPIO PARA CAMINAR (W A S D / flechas) =====
+    // Siempre mueve en plano horizontal, sin importar hacia donde mires con el
+    // mouse (arriba/abajo). Es la misma logica que el joystick de las gafas.
+    const teclasPresionadas = {};
+    window.addEventListener("keydown", (e) => { teclasPresionadas[e.code] = true; });
+    window.addEventListener("keyup", (e) => { teclasPresionadas[e.code] = false; });
+
+    scene.onBeforeRenderObservable.add(() => {
+        const adelante = camera.getDirection(BABYLON.Axis.Z);
+        adelante.y = 0;
+        adelante.normalize();
+        const derecha = camera.getDirection(BABYLON.Axis.X);
+        derecha.y = 0;
+        derecha.normalize();
+
+        const mover = BABYLON.Vector3.Zero();
+        if (teclasPresionadas["KeyW"] || teclasPresionadas["ArrowUp"]) mover.addInPlace(adelante);
+        if (teclasPresionadas["KeyS"] || teclasPresionadas["ArrowDown"]) mover.subtractInPlace(adelante);
+        if (teclasPresionadas["KeyD"] || teclasPresionadas["ArrowRight"]) mover.addInPlace(derecha);
+        if (teclasPresionadas["KeyA"] || teclasPresionadas["ArrowLeft"]) mover.subtractInPlace(derecha);
+
+        if (mover.length() > 0) {
+            mover.normalize();
+            camera.cameraDirection.addInPlace(mover.scale(velocidadCaminar * 0.02));
+        }
+    });
+
+    // ===== NITIDEZ: antialiasing y filtrado anisotropico (igual que en la maqueta) =====
     const pipeline = new BABYLON.DefaultRenderingPipeline("mejoraVisual", true, scene, [camera]);
     pipeline.samples = 4;
     pipeline.fxaaEnabled = true;
@@ -116,12 +134,10 @@ const createScene = async function () {
     });
 
     // ===== VIÑETA ANTI-MAREO (prioridad #1 de realismo) =====
-    // Se enciende sola mientras el joystick esta moviendo al usuario (locomocion),
-    // y se apaga cuando esta quieto o solo caminando fisicamente (eso no marea).
     pipeline.imageProcessing.vignetteEnabled = true;
     pipeline.imageProcessing.vignetteColor = new BABYLON.Color4(0, 0, 0, 1);
     pipeline.imageProcessing.vignetteWeight = 0;
-    let intensidadLocomocion = 0; // la actualiza el joystick de las gafas mas abajo
+    let intensidadLocomocion = 0;
 
     scene.onBeforeRenderObservable.add(() => {
         const objetivo = intensidadLocomocion > 0.15 ? 3.5 : 0;
@@ -131,11 +147,11 @@ const createScene = async function () {
     // ===== WEBXR: recorrido inmersivo (se oculta la sala real, VR completa) =====
     try {
         const xr = await scene.createDefaultXRExperienceAsync({
-            disableTeleportation: true,       // no usamos teletransporte: caminata fisica + joystick
+            disableTeleportation: true,
             optionalFeatures: true,
             uiOptions: {
-                sessionMode: "immersive-vr",       // VR completa: no se ve la sala real (distinto de la maqueta, que es AR)
-                referenceSpaceType: "local-floor"  // el piso real (donde esta parado el cliente) = piso del edificio
+                sessionMode: "immersive-vr",
+                referenceSpaceType: "local-floor"
             }
         });
 
@@ -144,22 +160,19 @@ const createScene = async function () {
         xrCamera.applyGravity = true;
         xrCamera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, medioAltoCapsula, anchoCuerpo);
         xrCamera.ellipsoidOffset = new BABYLON.Vector3(0, -medioAltoCapsula, 0);
-        pipeline.cameras.push(xrCamera); // la nitidez y la viñeta tambien aplican en las gafas
+        pipeline.cameras.push(xrCamera);
 
-        // Punto de partida al entrar en VR (se reubica cada vez que arranca la sesion,
-        // por si el cliente ya habia caminado con el modo escritorio antes de ponerse las gafas)
         xr.baseExperience.onStateChangedObservable.add((state) => {
             if (state === BABYLON.WebXRState.IN_XR) {
                 xrCamera.position.copyFrom(posicionInicial);
             }
         });
 
-        // ----- Joystick derecho: caminar (adelante/atras) y girar (izquierda/derecha) -----
-        let ejeCaminar = 0;   // adelante/atras
-        let ejeGirar = 0;     // izquierda/derecha
-        let ultimoGiro = 0;   // para el "snap turn" (giro en saltos, no continuo: marea menos)
+        let ejeCaminar = 0;
+        let ejeGirar = 0;
+        let ultimoGiro = 0;
         const anguloGiro = BABYLON.Tools.ToRadians(45);
-        const pausaEntreGiros = 350; // milisegundos
+        const pausaEntreGiros = 350;
 
         xr.input.onControllerAddedObservable.add((xrController) => {
             if (xrController.inputSource.handedness !== "right") return;
@@ -174,7 +187,6 @@ const createScene = async function () {
         });
 
         scene.onBeforeRenderObservable.add(() => {
-            // Caminar suave hacia donde mira la cabeza (usa la misma camara/colision/gravedad que el modo escritorio)
             if (Math.abs(ejeCaminar) > 0.15) {
                 const forward = xrCamera.getDirection(BABYLON.Axis.Z);
                 forward.y = 0;
@@ -185,7 +197,6 @@ const createScene = async function () {
                 intensidadLocomocion = 0;
             }
 
-            // Giro por saltos (snap turn) — mas comodo que girar continuo con el joystick
             const ahora = performance.now();
             if (Math.abs(ejeGirar) > 0.6 && (ahora - ultimoGiro) > pausaEntreGiros) {
                 const sentido = ejeGirar > 0 ? 1 : -1;
