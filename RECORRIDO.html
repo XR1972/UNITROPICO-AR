@@ -2,98 +2,211 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>SGOC XR - 20 DE JULIO</title>
-
+    <title>SGOC XR - RECORRIDO 20 DE JULIO</title>
     <script src="https://cdn.babylonjs.com/babylon.js"></script>
     <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
-
     <style>
-        html, body {
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            overflow: hidden;
-        }
-
-        #renderCanvas {
-            width: 100%;
-            height: 100%;
-            touch-action: none;
+        html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+        #renderCanvas { width: 100%; height: 100%; touch-action: none; }
+        #ayuda {
+            position: absolute; bottom: 10px; left: 10px; color: #fff;
+            font-family: sans-serif; font-size: 13px; background: rgba(0,0,0,.5);
+            padding: 8px 12px; border-radius: 8px; line-height: 1.5; max-width: 320px;
         }
     </style>
 </head>
-
 <body>
-
 <canvas id="renderCanvas"></canvas>
-
+<div id="ayuda">
+    <b>Prueba en computador:</b> clic sobre la pantalla y arrastra el mouse para mirar alrededor.
+    Muevete con <b>W A S D</b> (o las flechas). En las gafas: boton "Entrar en VR",
+    joystick derecho para caminar/girar.
+</div>
 <script>
 const canvas = document.getElementById("renderCanvas");
-
 const engine = new BABYLON.Engine(canvas, true);
 
+// ===== ALTURA DE OJOS Y TAMAÑO DE LA PERSONA (ajustar aqui si hace falta) =====
+const alturaOjos = 1.6;          // metros desde el piso hasta los ojos
+const anchoCuerpo = 0.30;        // medio-ancho de la "capsula" de colision (que tan cerca puede acercarse a una pared)
+const velocidadCaminar = 0.9;    // velocidad al caminar con teclado o joystick (metros por "paso" de render)
+
 const createScene = async function () {
-
     const scene = new BABYLON.Scene(engine);
-
-    // Cámara inicial
-    const camera = new BABYLON.UniversalCamera(
-        "camera",
-        new BABYLON.Vector3(0, 1.70, -5),
-        scene
-    );
-
-    camera.attachControl(canvas, true);
+    scene.collisionsEnabled = true;
+    scene.gravity = new BABYLON.Vector3(0, -0.98, 0);
+    scene.clearColor = new BABYLON.Color4(0.62, 0.76, 0.9, 1); // cielo azul claro provisional (se puede cambiar despues por un Sky Texture)
 
     // Luz
-    const light = new BABYLON.HemisphericLight(
-        "light",
-        new BABYLON.Vector3(0, 1, 0),
-        scene
-    );
+    const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+    light.intensity = 1.1;
+    light.groundColor = new BABYLON.Color3(0.5, 0.5, 0.5);
 
-    light.intensity = 1.2;
+    // ===== CARGAR EDIFICIO A ESCALA REAL (1:1, sin achicar como en la maqueta) =====
+    const result = await BABYLON.SceneLoader.ImportMeshAsync("", "./", "UNITROPICO.glb", scene);
+    console.log("EDIFICIO CARGADO (recorrido)", result);
+    result.meshes.forEach(mesh => { mesh.checkCollisions = true; });
 
-    // Cargar edificio
-    const result = await BABYLON.SceneLoader.ImportMeshAsync(
-        "",
-        "./",
-        "20 DE JULIO 5 PISOS.glb",
-        scene
-    );
+    // Encuadrar el edificio (mismo metodo que la maqueta: descarta piezas sueltas/lejanas para calcular el centro real)
+    const candidatos = result.meshes.filter(m => m.getTotalVertices && m.getTotalVertices() > 0);
+    const centros = candidatos.map(m => m.getBoundingInfo().boundingBox.centerWorld);
+    const xs = centros.map(c => c.x).sort((a, b) => a - b);
+    const ys = centros.map(c => c.y).sort((a, b) => a - b);
+    const zs = centros.map(c => c.z).sort((a, b) => a - b);
+    const medio = a => a[Math.floor(a.length / 2)];
+    const centroPrincipal = new BABYLON.Vector3(medio(xs), medio(ys), medio(zs));
+    const meshesEdificio = candidatos.filter(m => {
+        const c = m.getBoundingInfo().boundingBox.centerWorld;
+        return (Math.abs(c.x - centroPrincipal.x) < 60 && Math.abs(c.y - centroPrincipal.y) < 60 && Math.abs(c.z - centroPrincipal.z) < 20);
+    });
+    const bounds = BABYLON.Mesh.MinMax(meshesEdificio);
+    const center = BABYLON.Vector3.Center(bounds.min, bounds.max);
+    const tamano = bounds.max.subtract(bounds.min);
 
-    console.log("MODELO SGOC CARGADO", result);
+    // ===== CENTRAR EL EDIFICIO Y PONER SU PISO EN Y=0 =====
+    // Asi, cuando uno "entra en VR" parado en el piso real, queda parado sobre
+    // el piso del edificio (primer piso). Es la misma logica de piso-en-cero
+    // que usamos en la maqueta, pero aqui a tamaño real (sin achicar nada).
+    const edificioRoot = new BABYLON.TransformNode("edificioRoot", scene);
+    result.meshes.filter(mesh => !mesh.parent).forEach(mesh => { mesh.parent = edificioRoot; });
+    edificioRoot.position = new BABYLON.Vector3(-center.x, -bounds.min.y, -center.z);
 
-    // Activar WebXR
+    // ===== PUNTO DE PARTIDA: afuera, en la calle, frente al edificio =====
+    // La idea es empezar el recorrido DESDE AFUERA (para caminar alrededor,
+    // ver fachadas, ventanas, piso/andén) y luego entrar por la puerta principal.
+    // Como todavia no sabemos hacia donde mira exactamente la entrada principal
+    // dentro del archivo, por ahora arrancamos a unos metros de uno de los lados
+    // del edificio (no en el centro/adentro). ES UN PRIMER INTENTO:
+    // prueba en el computador, y si apareces adentro, metido en una pared, o
+    // mirando hacia el lado contrario a la entrada, dime hacia que lado hay que
+    // moverlo (adelante/atras/izquierda/derecha) y lo ajusto exacto.
+    const margenCalle = 6; // metros de distancia desde la fachada
+    const posicionInicial = new BABYLON.Vector3(0, alturaOjos, -(tamano.z / 2 + margenCalle));
+    const miradaInicial = new BABYLON.Vector3(0, alturaOjos, 0); // mirando hacia el edificio al arrancar
+
+    // ===== CAMARA PARA PROBAR EN COMPUTADOR (WASD + mouse) =====
+    const camera = new BABYLON.UniversalCamera("cameraRecorrido", posicionInicial.clone(), scene);
+    camera.setTarget(miradaInicial); // arranca mirando hacia el edificio, no hacia la calle
+    camera.minZ = 0.05;
+    camera.speed = velocidadCaminar * 0.35; // el "speed" de teclado se siente mas rapido que el mismo numero en el joystick
+    camera.angularSensibility = 4000;
+    camera.checkCollisions = true;
+    camera.applyGravity = true;
+    camera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, alturaOjos, anchoCuerpo);
+    camera.ellipsoidOffset = new BABYLON.Vector3(0, -alturaOjos, 0); // deja los "ojos" (camera.position) arriba de la capsula, no en el centro
+    camera.keysUp.push(87);    // W
+    camera.keysDown.push(83);  // S
+    camera.keysLeft.push(65);  // A
+    camera.keysRight.push(68); // D
+    camera.attachControl(canvas, true);
+
+    // ===== NITIDEZ: antialiasing + filtrado anisotropico (igual que en la maqueta) =====
+    const pipeline = new BABYLON.DefaultRenderingPipeline("mejoraVisual", true, scene, [camera]);
+    pipeline.samples = 4;
+    pipeline.fxaaEnabled = true;
+    result.meshes.forEach(mesh => {
+        if (!mesh.material) return;
+        const materiales = mesh.material.subMaterials || [mesh.material];
+        materiales.forEach(mat => {
+            if (!mat) return;
+            if (mat.diffuseTexture) mat.diffuseTexture.anisotropicFilteringLevel = 8;
+            if (mat.albedoTexture) mat.albedoTexture.anisotropicFilteringLevel = 8;
+        });
+    });
+
+    // ===== VIÑETA ANTI-MAREO (prioridad #1 de realismo) =====
+    // Se enciende sola mientras el joystick esta moviendo al usuario (locomocion),
+    // y se apaga cuando esta quieto o solo caminando fisicamente (eso no marea).
+    pipeline.imageProcessing.vignetteEnabled = true;
+    pipeline.imageProcessing.vignetteColor = new BABYLON.Color4(0, 0, 0, 1);
+    pipeline.imageProcessing.vignetteWeight = 0;
+    let intensidadLocomocion = 0; // la actualiza el joystick de las gafas mas abajo
+
+    scene.onBeforeRenderObservable.add(() => {
+        const objetivo = intensidadLocomocion > 0.15 ? 3.5 : 0;
+        pipeline.imageProcessing.vignetteWeight += (objetivo - pipeline.imageProcessing.vignetteWeight) * 0.1;
+    });
+
+    // ===== WEBXR: recorrido inmersivo (se oculta la sala real, VR completa) =====
     try {
-
         const xr = await scene.createDefaultXRExperienceAsync({
-            floorMeshes: []
+            disableTeleportation: true,       // no usamos teletransporte: caminata fisica + joystick
+            optionalFeatures: true,
+            uiOptions: {
+                sessionMode: "immersive-vr",       // VR completa: no se ve la sala real (distinto de la maqueta, que es AR)
+                referenceSpaceType: "local-floor"  // el piso real (donde esta parado el cliente) = piso del edificio
+            }
         });
 
-        console.log("SGOC XR ACTIVO");
+        const xrCamera = xr.baseExperience.camera;
+        xrCamera.checkCollisions = true;
+        xrCamera.applyGravity = true;
+        xrCamera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, alturaOjos, anchoCuerpo);
+        xrCamera.ellipsoidOffset = new BABYLON.Vector3(0, -alturaOjos, 0);
+        pipeline.cameras.push(xrCamera); // la nitidez y la viñeta tambien aplican en las gafas
 
+        // Punto de partida al entrar en VR (se reubica cada vez que arranca la sesion,
+        // por si el cliente ya habia caminado con el modo escritorio antes de ponerse las gafas)
+        xr.baseExperience.onStateChangedObservable.add((state) => {
+            if (state === BABYLON.WebXRState.IN_XR) {
+                xrCamera.position.copyFrom(posicionInicial);
+            }
+        });
+
+        // ----- Joystick derecho: caminar (adelante/atras) y girar (izquierda/derecha) -----
+        let ejeCaminar = 0;   // adelante/atras
+        let ejeGirar = 0;     // izquierda/derecha
+        let ultimoGiro = 0;   // para el "snap turn" (giro en saltos, no continuo: marea menos)
+        const anguloGiro = BABYLON.Tools.ToRadians(45);
+        const pausaEntreGiros = 350; // milisegundos
+
+        xr.input.onControllerAddedObservable.add((xrController) => {
+            if (xrController.inputSource.handedness !== "right") return;
+            xrController.onMotionControllerInitObservable.add((motionController) => {
+                const joystick = motionController.getComponent("xr-standard-thumbstick");
+                if (!joystick) return;
+                joystick.onAxisValueChangedObservable.add((axes) => {
+                    ejeCaminar = axes.y;
+                    ejeGirar = axes.x;
+                });
+            });
+        });
+
+        scene.onBeforeRenderObservable.add(() => {
+            // Caminar suave hacia donde mira la cabeza (usa la misma camara/colision/gravedad que el modo escritorio)
+            if (Math.abs(ejeCaminar) > 0.15) {
+                const forward = xrCamera.getDirection(BABYLON.Axis.Z);
+                forward.y = 0;
+                forward.normalize();
+                xrCamera.cameraDirection.addInPlace(forward.scale(-ejeCaminar * velocidadCaminar * 0.01));
+                intensidadLocomocion = Math.abs(ejeCaminar);
+            } else {
+                intensidadLocomocion = 0;
+            }
+
+            // Giro por saltos (snap turn) — mas comodo que girar continuo con el joystick
+            const ahora = performance.now();
+            if (Math.abs(ejeGirar) > 0.6 && (ahora - ultimoGiro) > pausaEntreGiros) {
+                const sentido = ejeGirar > 0 ? 1 : -1;
+                const rot = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, anguloGiro * sentido);
+                xrCamera.rotationQuaternion = rot.multiply(xrCamera.rotationQuaternion);
+                ultimoGiro = ahora;
+            }
+        });
+
+        console.log("SGOC XR - RECORRIDO ACTIVO");
     } catch (error) {
-
         console.log("WebXR no disponible en este dispositivo", error);
-
     }
 
     return scene;
 };
 
 createScene().then(scene => {
-
-    engine.runRenderLoop(function () {
-        scene.render();
-    });
-
+    engine.runRenderLoop(function () { scene.render(); });
 });
 
-window.addEventListener("resize", function () {
-    engine.resize();
-});
+window.addEventListener("resize", function () { engine.resize(); });
 </script>
-
 </body>
 </html>
