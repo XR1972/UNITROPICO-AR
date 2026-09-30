@@ -30,6 +30,7 @@ const engine = new BABYLON.Engine(canvas, true);
 const alturaOjos = 1.6;          // metros desde el piso hasta los ojos
 const anchoCuerpo = 0.30;        // medio-ancho de la "capsula" de colision (que tan cerca puede acercarse a una pared)
 const velocidadCaminar = 0.9;    // velocidad al caminar con teclado o joystick (metros por "paso" de render)
+const medioAltoCapsula = alturaOjos / 2; // mitad de la altura de la "capsula" de colision (no cambiar: se calcula sola)
 
 const createScene = async function () {
     const scene = new BABYLON.Scene(engine);
@@ -92,8 +93,8 @@ const createScene = async function () {
     camera.angularSensibility = 4000;
     camera.checkCollisions = true;
     camera.applyGravity = true;
-    camera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, alturaOjos, anchoCuerpo);
-    camera.ellipsoidOffset = new BABYLON.Vector3(0, -alturaOjos, 0); // deja los "ojos" (camera.position) arriba de la capsula, no en el centro
+    camera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, medioAltoCapsula, anchoCuerpo);
+    camera.ellipsoidOffset = new BABYLON.Vector3(0, -medioAltoCapsula, 0); // deja los "ojos" (camera.position) arriba de la capsula, no en el centro
     camera.keysUp.push(87);    // W
     camera.keysDown.push(83);  // S
     camera.keysLeft.push(65);  // A
@@ -141,8 +142,8 @@ const createScene = async function () {
         const xrCamera = xr.baseExperience.camera;
         xrCamera.checkCollisions = true;
         xrCamera.applyGravity = true;
-        xrCamera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, alturaOjos, anchoCuerpo);
-        xrCamera.ellipsoidOffset = new BABYLON.Vector3(0, -alturaOjos, 0);
+        xrCamera.ellipsoid = new BABYLON.Vector3(anchoCuerpo, medioAltoCapsula, anchoCuerpo);
+        xrCamera.ellipsoidOffset = new BABYLON.Vector3(0, -medioAltoCapsula, 0);
         pipeline.cameras.push(xrCamera); // la nitidez y la viñeta tambien aplican en las gafas
 
         // Punto de partida al entrar en VR (se reubica cada vez que arranca la sesion,
