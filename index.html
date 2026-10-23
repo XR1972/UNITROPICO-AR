@@ -45,11 +45,7 @@ scene.clearColor = new BABYLON.Color4(0.88, 0.92, 0.98, 1);
 const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
 light.intensity = 1.3;
 light.groundColor = new BABYLON.Color3(0.8, 0.8, 0.85);
-    // Luz
-    const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
-    light.intensity = 1.1;
-    light.groundColor = new BABYLON.Color3(0.5, 0.5, 0.5);
-
+    
     // ===== CARGAR EDIFICIO A ESCALA REAL (1:1, sin achicar como en la maqueta) =====
     const result = await BABYLON.SceneLoader.ImportMeshAsync("", "./", "UNITROPICO.glb", scene);
     console.log("EDIFICIO CARGADO (recorrido)", result);
