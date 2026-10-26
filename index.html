@@ -13,6 +13,48 @@
             font-family: sans-serif; font-size: 13px; background: rgba(0,0,0,.5);
             padding: 8px 12px; border-radius: 8px; line-height: 1.5; max-width: 320px;
         }
+                /* ===== ESTILOS DEL MINIMAP ===== */
+        #minimapContainer {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 250px;
+            height: 250px;
+            background: rgba(0, 0, 0, 0.8);
+            border: 3px solid #00ff00;
+            border-radius: 8px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            color: #00ff00;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+            z-index: 1000;
+        }
+
+        #minimapCanvas {
+            width: 100%;
+            height: 200px;
+            background: #1a1a1a;
+            border: 1px solid #00ff00;
+            margin-bottom: 8px;
+            border-radius: 4px;
+        }
+
+        #minimapInfo {
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        #pisoActual {
+            font-weight: bold;
+            color: #ffff00;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .minimapStat {
+            font-size: 11px;
+            margin: 2px 0;
+        }
     </style>
 </head>
 <body>
@@ -22,10 +64,127 @@
     Muevete con <b>W A S D</b> (o las flechas). En las gafas: boton "Entrar en VR",
     joystick derecho para caminar/girar.
 </div>
+<!-- ===== MINIMAP ===== -->
+<div id="minimapContainer">
+    <canvas id="minimapCanvas"></canvas>
+    <div id="minimapInfo">
+        <div id="pisoActual">📍 Piso: 1</div>
+        <div class="minimapStat">X: 0.0 m</div>
+        <div class="minimapStat">Z: 0.0 m</div>
+        <div class="minimapStat">Trail: 0 pts</div>
+    </div>
+</div>
+    
 <script>
 const canvas = document.getElementById("renderCanvas");
 const engine = new BABYLON.Engine(canvas, true);
+// ===== CONFIGURACIÓN DEL MINIMAP =====
+const minimapCanvas = document.getElementById("minimapCanvas");
+const minimapCtx = minimapCanvas.getContext("2d");
+let trailPoints = [];
+const MAX_TRAIL_POINTS = 500;
+const MIN_DISTANCE_TRAIL = 0.5; // metros
 
+// Alturas de pisos (mismas que en Blender)
+const FLOOR_HEIGHTS = {
+    1: 0.00, 2: 4.10, 3: 6.85, 4: 9.60, 5: 12.35
+};
+
+const FLOOR_RANGES = {
+    1: [0.00, 3.00],
+    2: [3.00, 5.48],
+    3: [5.48, 8.23],
+    4: [8.23, 10.98],
+    5: [10.98, 15.00]
+};
+
+// Función para detectar piso actual
+function getFloor(y) {
+    for (let floor = 1; floor <= 5; floor++) {
+        const [min, max] = FLOOR_RANGES[floor];
+        if (y >= min && y <= max) return floor;
+    }
+    return 1;
+}
+
+// Función para renderizar el minimap
+function renderMinimap(position, floor) {
+    const scale = 20; // píxeles por metro
+    const centerX = minimapCanvas.width / 2;
+    const centerY = minimapCanvas.height / 2;
+
+    // Limpiar canvas
+    minimapCtx.fillStyle = "#1a1a1a";
+    minimapCtx.fillRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+
+    // Dibujar borde
+    minimapCtx.strokeStyle = "#00ff00";
+    minimapCtx.lineWidth = 2;
+    minimapCtx.strokeRect(2, 2, minimapCanvas.width - 4, minimapCanvas.height - 4);
+
+    // Dibujar grid (lineas de referencia cada 5 metros)
+    minimapCtx.strokeStyle = "rgba(0, 255, 0, 0.2)";
+    minimapCtx.lineWidth = 1;
+    for (let i = -50; i <= 50; i += 5) {
+        const x = centerX + i * scale;
+        const z = centerY + i * scale;
+        if (x > 0 && x < minimapCanvas.width) {
+            minimapCtx.beginPath();
+            minimapCtx.moveTo(x, 0);
+            minimapCtx.lineTo(x, minimapCanvas.height);
+            minimapCtx.stroke();
+        }
+        if (z > 0 && z < minimapCanvas.height) {
+            minimapCtx.beginPath();
+            minimapCtx.moveTo(0, z);
+            minimapCtx.lineTo(minimapCanvas.width, z);
+            minimapCtx.stroke();
+        }
+    }
+
+    // Dibujar trail (camino recorrido)
+    if (trailPoints.length > 1) {
+        minimapCtx.strokeStyle = "rgba(0, 255, 0, 0.6)";
+        minimapCtx.lineWidth = 2;
+        minimapCtx.beginPath();
+        minimapCtx.moveTo(centerX + trailPoints[0].x * scale, centerY + trailPoints[0].z * scale);
+        for (let i = 1; i < trailPoints.length; i++) {
+            minimapCtx.lineTo(centerX + trailPoints[i].x * scale, centerY + trailPoints[i].z * scale);
+        }
+        minimapCtx.stroke();
+    }
+
+    // Dibujar posición actual del jugador (punto rojo)
+    minimapCtx.fillStyle = "#ff0000";
+    minimapCtx.beginPath();
+    minimapCtx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+    minimapCtx.fill();
+
+    // Dibujar dirección (flecha)
+    minimapCtx.strokeStyle = "#ff0000";
+    minimapCtx.lineWidth = 2;
+    minimapCtx.beginPath();
+    minimapCtx.moveTo(centerX, centerY);
+    minimapCtx.lineTo(centerX, centerY - 15);
+    minimapCtx.stroke();
+
+    // Actualizar info en pantalla
+    document.getElementById("pisoActual").textContent = `📍 Piso: ${floor}`;
+    document.getElementById("pisoActual").parentElement.querySelectorAll(".minimapStat")[0].textContent = `X: ${position.x.toFixed(1)} m`;
+    document.getElementById("pisoActual").parentElement.querySelectorAll(".minimapStat")[1].textContent = `Z: ${position.z.toFixed(1)} m`;
+    document.getElementById("pisoActual").parentElement.querySelectorAll(".minimapStat")[2].textContent = `Trail: ${trailPoints.length} pts`;
+}
+
+// Función para agregar puntos al trail
+function addTrailPoint(position) {
+    if (trailPoints.length === 0 || 
+        BABYLON.Vector3.Distance(new BABYLON.Vector3(trailPoints[trailPoints.length - 1].x, 0, trailPoints[trailPoints.length - 1].z), 
+                                 new BABYLON.Vector3(position.x, 0, position.z)) >= MIN_DISTANCE_TRAIL) {
+        trailPoints.push({ x: position.x, z: position.z });
+        if (trailPoints.length > MAX_TRAIL_POINTS) trailPoints.shift();
+    }
+}
+    
 // ===== ALTURA DE OJOS Y TAMAÑO DE LA PERSONA (ajustar aqui si hace falta) =====
 const alturaOjos = 1.50;         // metros desde el piso hasta los ojos (altura promedio colombiana)
 const anchoCuerpo = 0.30;        // medio-ancho de la "capsula" de colision (que tan cerca puede acercarse a una pared)
@@ -199,6 +358,9 @@ light.groundColor = new BABYLON.Color3(0.8, 0.8, 0.85);
             camera.cameraDirection.setAll(0);
             primerAjusteAltura = true;
         }
+       // Actualizar minimap
+        addTrailPoint(camera.position);
+        renderMinimap(camera.position, getFloor(camera.position.y));
     });
 
     // ===== NITIDEZ: antialiasing y filtrado anisotropico (igual que en la maqueta) =====
@@ -316,7 +478,10 @@ light.groundColor = new BABYLON.Color3(0.8, 0.8, 0.85);
                 xrCamera.cameraDirection.setAll(0);
                 primerAjusteAlturaXR = true;
             }
-        });
+                       // Actualizar minimap
+            addTrailPoint(xrCamera.position);
+            renderMinimap(xrCamera.position, getFloor(xrCamera.position.y));                
+         });
 
         console.log("SGOC XR - RECORRIDO ACTIVO");
     } catch (error) {
