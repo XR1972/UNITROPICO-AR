@@ -207,9 +207,11 @@ function renderMinimap(position, floor) {
 
     // ===== ACTUALIZAR INFO =====
     document.getElementById("pisoActual").textContent = `📍 Piso: ${floor}`;
-    document.querySelector(".minimapStat:nth-of-type(1)").textContent = `X: ${position.x.toFixed(1)} m`;
-    document.querySelector(".minimapStat:nth-of-type(2)").textContent = `Z: ${position.z.toFixed(1)} m`;
-    document.querySelector(".minimapStat:nth-of-type(3)").textContent = `Trail: ${trailPoints.length} pts`;
+    // ✅ ESTO FUNCIONA:
+const statsElements = document.querySelectorAll("#minimapInfo .minimapStat");
+if (statsElements[0]) statsElements[0].textContent = `X: ${position.x.toFixed(1)} m`;
+if (statsElements[1]) statsElements[1].textContent = `Z: ${position.z.toFixed(1)} m`;
+if (statsElements[2]) statsElements[2].textContent = `Trail: ${trailPoints.length} pts`;
 }
     
 // ===== ALTURA DE OJOS Y TAMAÑO DE LA PERSONA (ajustar aqui si hace falta) =====
